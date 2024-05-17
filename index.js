@@ -2,77 +2,147 @@ const express = require('express')
 const app = express()
 const cors = require('cors')
 require('dotenv').config()
-const mongoose = require('mongoosse')
+const mongoose = require("mongoose");
+const bodyParser = require("body-parser");
 
-mongoose.connect(process.env.MONGO_URI,() => {
-  console.log('connected to DB succesfuly')
-})
 
-const  userSchema = mongoose.Schema(
-  {
-  username: {
-    type: String,
-    unique: true,
-  },
-  },
-  { versionKey: false}
-)
-
-const User = mongoose.model("User", userSchema)
-const exerciseSchema = mongoose.Schema({
+const userSchema = new mongoose.Schema({
   username: String,
+});
+
+const exerciseSchema = new mongoose.Schema({
+  userId: String,
   description: String,
-  duration : Number, 
+  duration: Number,
   date: String,
-  userId: String
-})
-const Exercise = mongoose.model("Exercise", exerciseSchema)
+});
+
+const logSchema = new mongoose.Schema(
+  {
+    username: String,
+    count: Number,
+    userId: String,
+    log: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Exercise' }]
+  }
+);
+
+const User = mongoose.model("User", userSchema);
+const Exercise = mongoose.model("Exercise", exerciseSchema);
+const Log = mongoose.model("Log", logSchema);
+
+const initDBConnection = async () => {
+  try {
+    await mongoose.connect(process.env.MONGO_URI);
+    console.log("Connected to DB successfully.")
+  } catch (error) {
+    console.log(error);
+  }
+}
+
+initDBConnection();
 
 app.use(cors())
-app.use(express.urlencoded({extended: true}))
+app.use(bodyParser.urlencoded({ extended: false }))
+app.use(bodyParser.json())
 app.use(express.static('public'))
 app.get('/', (req, res) => {
   res.sendFile(__dirname + '/views/index.html')
 });
-// GET request to /api/users
-app.get("/api/users", async (req, res) => {
-  const users = await User.find()
-  res.send(users)
-})
-//POST to /api/users username
-app.post('/api/users', async (req, res) => {
+
+
+app.post("/api/users", (req, res) => {
+
   const username = req.body.username;
-  const foundUser = await User.findOne({ username})
 
-  if(foundUser) {
-    res.json(foundUser)
+  const newUser = new User({ username });
+  newUser.save().then(() => console.log(`Created new user ${newUser}`));
+  res.status(200).send({ username: newUser.username, _id: newUser._id });
+
+})
+
+app.get("/api/users", (req, res) => {
+  User.find({}).then((users) => {
+    res.status(200).send(users);
+  })
+})
+
+
+app.post("/api/users/:_id/exercises", async (req, res) => {
+  const userId = req.params._id;
+  const description = req.body.description;
+  const duration = parseInt(req.body.duration);
+  const date = req.body.date ? new Date(req.body.date).toDateString() : new Date().toDateString();
+  try {
+    const user = await User.findById(userId);
+
+    const newExercise = new Exercise({
+      userId,
+      description,
+      duration,
+      date
+    });
+
+    const exercise = await newExercise.save();
+
+    res.json({
+      _id: user._id,
+      username: user.username,
+      description: exercise.description,
+      duration: exercise.duration,
+      date: date
+    })
+
+  } catch (error) {
+
   }
-  const user = await User.create({
-    username,
-  })
+});
 
-  res.json(user)
-  
+
+app.get("/api/users/:_id/logs", async (req, res) => {
+  const userId = req.params._id;
+  const { from, to, limit } = req.query;
+
+  const exerciseQuery = {};
+
+  if (from && !to) {
+    exerciseQuery.date = { $gte: new Date(from.toString()).toDateString() };
+  }
+
+  if (to && !from) {
+    exerciseQuery.date = { $lte: new Date(to.toString()).toDateString() };
+  }
+
+  if (from && to) {
+    exerciseQuery.date = { $gte: new Date(from.toString()).toDateString(), $lte: new Date(to.toString()).toDateString() };
+  }
+
+  try {
+    const user = await User.findById(userId);
+
+    const userExercises = await Exercise.find({ userId }, exerciseQuery)
+      .select({ _id: 0, description: 1, duration: 1, date: 1 })
+      .limit(limit ? parseInt(limit) : undefined);
+
+    const newLog = new Log({
+      username: user.username,
+      count: userExercises.length,
+      userId: userId,
+      log: userExercises
+    });
+
+    const log = await newLog.save();
+
+    res.send(log);
+
+  } catch (error) {
+    console.log(error)
+  }
 })
 
-// POST to /api/users/:_id/exercises
-// {
-//   username: "fcc_test",
-//   description: "test",
-//   duration: 60,
-//   date: "Mon Jan 01 1990",
-//   _id: "5fb5853f734231456ccb3b05"
-// }
-app.const('/api/users/:_id/exercises', (req, res) => {
-  const {_id, description, duration, date} = req.body;
-  res.send({
-    _id,
-    description,
-    duration,
-    date,
-  })
-})
+//api/users/65ea0dddc0eabe8688d9a923/logs
+
 
 const listener = app.listen(process.env.PORT || 3000, () => {
   console.log('Your app is listening on port ' + listener.address().port)
 })
+
